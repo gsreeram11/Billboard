@@ -1,0 +1,343 @@
+---
+title: "Billboard"
+author: "Ganesh Sreeram"
+date: "2/27/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#Loading Packages  
+
+library(lubridate)
+
+library(tidyr)
+
+library(tidyverse)
+
+library(changepoint)
+
+library(changepoint.np)
+
+library(fpp2)
+
+library(forecast)
+
+library(dplyr)
+
+library(lmtest)
+
+library(car)
+
+library(caret)
+
+library(MASS)
+
+library(pROC)
+```
+
+```{r}
+
+#Loading data 
+
+data = read_csv("songs.csv")
+
+
+head(data)
+```
+
+
+
+
+
+1. What percentage of songs in the dataset made it to the Top 10 from the training set?  
+
+```{r}
+#Split the data into training and testing set  
+
+train <- data %>% 
+  filter(year >= 1990 & year <= 2009)
+
+test <- data %>%
+  filter(year > 2009)
+
+```
+
+```{r}
+
+a = sum(train$Top10)/NROW(train)
+
+
+paste(a, "success rate") 
+
+```
+
+
+2. Without building a model, if you had to guess whether a new song was going to make it to the Top 10, what would you guess?  How often would you correctly identify a Top10 Hit in the test set?  Is this a good strategy for a record company to follow when deciding whether or not to invest in artists?  Justify your answer.
+
+**Answer** Without building a model, we would optimally pick artists that have had hits in the past. the accuracy of this approach to correctly predict a top10 his is 35%, which is less than 75%, the model we built .This is not a very good strategy as it would not allow the recording company to identify new artists and is also not very accurate. 
+
+```{r}
+train_hits = train %>%
+  filter(Top10 == 1) %>%
+  dplyr::select(year, artistname) %>%
+  arrange(year, artistname)
+
+test_hits = test %>% 
+  mutate(hit_before = ifelse(artistname  %in% train_hits$artistname, 1, 0), 
+correct_pred = ifelse(Top10 == hit_before,1,0))%>%
+  dplyr::select(year,artistname, Top10, hit_before, correct_pred)
+
+no_model_table = table(test_hits$Top10, test_hits$hit_before)
+
+(no_model_table[2,2])/sum(no_model_table[,2])
+
+
+
+
+```
+
+3.Build a logistic regression model to predict Top 10 using all the variables EXCEPT: 
+Why do you think we are excluding these variables?
+
+**Answer** We do not include songtitle and artist title because there is no information in the data set that is associted to those variables. In order to include these variables we would need sentimental data associated with it. Also, SongID and artist ID are not included because each row in the dataset is identified as unique, thus including those two variables is useless. Finally, we do not include year because year by itself does not any relevant information to the model. We could ad a straight line in the model by using a trend variable rather than having year. 
+
+```{r}
+
+model1 = glm(Top10~.-year-songtitle-artistname-songID-artistID, data = train, family = "binomial")
+summary(model1)
+```
+
+4.What is the R2 of your model?  (in %)  Interpret it. 
+
+**Answer** 20.5% of variability in Y is explained by the X's 
+
+```{r}
+
+(model1$null.deviance-model1$deviance)/model1$null.deviance
+
+
+```
+
+5.What is the deviance of your model?  Interpret it. 
+
+**Answer** Te deviance of the model is 4782.719. It is the predicition error using a model with explanatory variables.  
+
+```{r}
+
+model1$deviance
+
+```
+
+6. Prune your model until you get a model with only significant variables.  What is the R2 of the new model (to the nearest whole number in %)? In your own words, explain why you think this model is better or worse than the previous model? How would you explain the difference to your manager?
+
+**Answer** The manual approach here is to drop the variables with extremely high p-values iteratively, till all the variables are significant. We have done this with the help of the "Step AIC" function. The r-squared of the new model 20.3%, which is similar to the model with all the variables. Since there is not a  big change in the r-squared value we can conclude that removing the variables did not impact the explanatory power of the model. We think that this model is better because the removal of the variables helps in fixing the problem of an overfitted model. It improves the ability of the training set to make better out of sample predicitions.  
+
+```{r}
+
+
+model2 = glm(Top10~.-year-songtitle-artistname-songID-artistID-key, data = train, family = "binomial")
+step.model = stepAIC(model2, direction="backward", trace = F)
+summary(step.model)
+```
+
+
+
+
+```{r}
+(step.model$null.deviance-step.model$deviance)/step.model$null.deviance
+```
+
+7. What is the coefficient of “loudness” in the reduced model?  In one sentence, what does this coefficient mean in practical terms?
+
+**Answer** 0.23%,  as the loudness increases the odds of a song being a hit increases by 0.23% for every one percent increase. 
+
+```{r}
+step.model$coefficients["loudness"]
+
+```
+
+
+8. Use your model to predict whether each of the songs in the test set will be a Top10 hit.  You can use .45 as the prediction threshold.  List the 10 songs from the test set (with artist) that were predicted to be most successful.
+
+```{r}
+
+M.test.prob = predict(step.model,test[,-38] , type = "response")
+
+test$prediction = M.test.prob
+test$predicted.class = ifelse(M.test.prob >= 0.45, 1,0)
+
+top10 = test %>%
+  arrange(desc(prediction)) %>%
+  dplyr::select(artistname, songtitle, predicted.class,prediction, Top10)
+
+top10
+```
+
+9. What is the confusion matrix on the training set?
+
+```{r}
+
+M.train.prob = round(predict(step.model,type = "response"),3)
+train$Predicted.class = ifelse(M.train.prob >=0.45, 1,0)
+table(train$Top10, train$Predicted.class)
+
+```
+
+10.Using training confusion matrix for training set calculate the following metrics: accuracy, misclassification error, false negative, false positive, true negative, true positive.
+
+```{r}
+#Misclssification Rate 
+
+misclassification_train = (815+193)/nrow(train)
+misclassification_train
+
+#accuracy 
+
+accuracy_train = (5948+245)/nrow(train)
+accuracy_train
+
+#False Positive (Number of incorrect/negative error) Number of times we predicted Top10 hit but it was not 
+
+false_positive_train = 193/(5948+193)
+false_positive_train
+
+#False negative (Number of incorrect/negative error) Number of times we predicted not hit but it was 
+
+false_negative_train = 815/(815+245)
+false_negative_train
+
+#True Positive (Number of incorrect/negative error) Number of times we predicted Top10 hit and it was
+
+true_positive_train = 245/(815+245)
+true_positive_train
+
+#True negative (Number of incorrect/negative error) Number of times we predicted not hit and it was not a hit
+
+true_negative_train = 5948/(5948+193)
+true_negative_train
+
+```
+
+11.	 What is the confusion matrix on the testing set?
+
+```{r}
+table(test$Top10, test$predicted.class)
+
+
+```
+
+12.	 Using training confusion matrix for training set calculate the following metrics: accuracy, misclassification error, false negative, false positive, true negative, true positive. In one sentence interpret each metric. 
+
+```{r}
+#Misclssification Rate 
+
+misclassification_test = (44+5)/nrow(test)
+misclassification_test
+
+#accuracy 
+
+accuracy_test = (309+15)/nrow(test)
+accuracy_test
+
+#False Positive (Number of incorrect/negative error) Number of times we predicted Top10 hit but it was not 
+
+false_positive_test = 5/(309+5)
+false_positive_test
+
+#False negative (Number of incorrect/negative error) Number of times we predicted not hit but it was 
+
+false_negative_test = 44/(44+15)
+false_negative_test
+
+#True Positive (Number of incorrect/negative error) Number of times we predicted Top10 hit and it was
+
+true_positive_test = 15/(44+15)
+true_positive_test
+
+#True negative (Number of incorrect/negative error) Number of times we predicted not hit and it was not a hit
+
+true_negative_test = 309/(309+5)
+true_negative_test
+
+
+
+
+```
+
+
+13.	 Based on your confusion matrix, do you think this is a good model for the business to use to identify Top 10 Hits?  Is it better than your strategy in Question 2. (you may make assumptions regarding cost what if…) ?
+
+**Answer** Since our true negative rate is extremely high, we would focus more on our true positive rate since that matters the most. From a cost point of view, launching a song that is not a hit will lead to large losses, thus identifying hit or not will be our primary focus, since we are good at identifying a song that will not be a hit. This strategy is better than our strategy in Q2 because this allows us to identify new artists. However, the probability of incurring losses is slightly higher in this case, but those losses are rewarded with much higher profits. 
+
+
+14.	 Given these results, how would you recommend incorporating a model like this into the business process at a record label scouting out new talent? (This is a practical question, not a technical data science questions)
+
+**Answer** Based on these results we would create a base model that would identify all the factors associated with a song. Then we would evaluate the song using our model and see how significant all the factors are. After, that we would see if the predicition is accurate or not. Finally, we would analyze the artist against the market trends in order to understand if the overall genre is trending or not. 
+
+
+15.	 The threshold .45 seems a bit arbitrary.  Can you come up with a better threshold?  In what sense is it better? You may explore different values of the cut off probability for different metrics. You may present your results visually or in a table. Provide brief interpretation. Please read question 15. Before you plan solution for this question.
+
+**Answer** Optimal threshold from our model is 0.38, using the profit function described in the code below. It is better because it allows us to fun artists using a quantifiable threshold. The results can be seen in the graph below with the red line signifying the optimal cut off point with the highest profits. The idea is to maximize profits. 
+
+```{r}
+
+test_predictions <- predict(step.model, test[, -38], type = "response")
+
+test$prob_hit <- test_predictions
+test$predicted_hit <- ifelse(test$prob_hit >= 0.45, 1, 0)
+
+cut_off_probs <- seq(0.10, 0.7, by = 0.01)
+
+n <- length(cut_off_probs)
+
+true_pos <- rep(0, n)
+false_pos <- rep(0, n)
+profits <- rep(0, n)
+
+for(i in 1:n){
+  
+  test$predicted_hit <- ifelse(test$prob_hit >= cut_off_probs[i], 1, 0)
+  test_table <- table(test$Top10, test$predicted_hit)
+  
+  p_profit <- test_table[2, 2] / sum(test_table[, 2])
+  
+  profit <-  50 * p_profit + (-30) * (1 - p_profit)
+  
+  true_pos[i] <- test_table[2, 2] / sum(test_table[2, ])
+  false_pos[i] <- test_table[1, 2] / sum(test_table[1, ])
+  profits[i] <- profit * sum(test_table[, 2])
+}
+
+# Profit
+plot(cut_off_probs, profits, type ='l')
+opt_cutoff <- which.max(profits)
+abline(v = cut_off_probs[opt_cutoff], col = "red")
+
+plot(cut_off_probs, true_pos, type ='b')
+cut_off_probs[opt_cutoff]
+```
+
+16.	Perform a little research and figure out the answer to the question: how the graph True Positives (y axis) versus False Positives (x axis) is called? Create this graph for this problem. 
+
+```{r}
+# ROC Curve
+plot(false_pos, true_pos, type = 'l', main = "ROC Curve")
+```
+
+
+
+
+
+
+
+
+
+
+
